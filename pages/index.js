@@ -1,253 +1,154 @@
-import React, { useState, useEffect } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, setLogLevel } from 'firebase/firestore';
+import React, { useState, useEffect, useRef } from 'react';
 
-// Set Firebase log level for debugging
-setLogLevel('debug');
 
-// Global variables for Firebase configuration and app ID
-// IMPORTANT: These variables are provided by the Canvas environment.
-// For local development, you must replace them with your own values.
-
-// Replace the empty object {} with your actual Firebase config object.
-// You can get this from your Firebase project settings.
-const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_STORAGE_BUCKET",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
-};
-
-// For local testing, you can use a fixed value for appId and null for the auth token.
-// The app will function in anonymous mode.
-const appId = "my-local-test-app";
-const initialAuthToken = null;
-
-// Firebase initialization variables
-let app = null;
-let db = null;
-let auth = null;
-let firebaseConfigError = '';
-
-// Check if the configuration is valid before initializing Firebase
-if (!firebaseConfig.projectId || !firebaseConfig.apiKey) {
-    firebaseConfigError = "Firebase configuration is missing. Please ensure your environment provides a valid __firebase_config.";
-    console.error(firebaseConfigError);
-} else {
-    // Initialize Firebase outside the component to avoid re-initialization
-    app = initializeApp(firebaseConfig);
-    db = getFirestore(app);
-    auth = getAuth(app);
-}
-
-// Main App component
 const App = () => {
-    const [user, setUser] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [usernameInput, setUsernameInput] = useState('');
-    const [message, setMessage] = useState({ text: '', isError: false, show: false });
-    const [usernameDisplay, setUsernameDisplay] = useState('Guest');
+  const [metrics, setMetrics] = useState({
+    cpu: '--',
+    memory: '--',
+    network: '--',
+    disk: '--',
+  });
+  const chartRef = useRef(null);
+  const chartInstanceRef = useRef(null);
+  const dataHistoryRef = useRef({
+    labels: [],
+    cpu: [],
+    memory: [],
+    network: [],
+    disk: [],
+  });
 
-    // Function to display a message to the user
-    const showMessage = (text, isError = false) => {
-        setMessage({ text, isError, show: true });
-        setTimeout(() => {
-            setMessage(prev => ({ ...prev, show: false }));
-        }, 3000);
-    };
+  const generateData = () => ({
+    cpu: Math.floor(Math.random() * 100) + 1,
+    memory: Math.floor(Math.random() * 100) + 1,
+    network: Math.floor(Math.random() * 50) + 1,
+    disk: Math.floor(Math.random() * 20) + 1,
+  });
 
-    // Handle initial auth state and data fetching
-    useEffect(() => {
-        if (firebaseConfigError) {
-            setLoading(false);
-            return;
-        }
-
-        const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-            if (currentUser) {
-                setUser(currentUser);
-                const fetchedUsername = await fetchUserData(currentUser.uid);
-                if (fetchedUsername) {
-                    setUsernameDisplay(fetchedUsername);
-                } else {
-                    setUsernameDisplay('Guest');
-                }
-            } else {
-                setUser(null);
-            }
-            setLoading(false);
+  useEffect(() => {
+    // Dynamically load Chart.js and then initialize the chart
+    const loadChartJs = async () => {
+      try {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+          script.onload = resolve;
+          script.onerror = reject;
+          document.head.appendChild(script);
         });
 
-        if (initialAuthToken) {
-            signInWithCustomToken(auth, initialAuthToken).catch(error => {
-                console.error("Error signing in with custom token:", error);
-            });
-        }
-        
-        return () => unsubscribe();
-    }, []);
+        const ctx = chartRef.current.getContext('2d');
+        const initialData = {
+          labels: [],
+          datasets: [
+            { label: 'CPU Usage', data: [], borderColor: '#2563eb', tension: 0.3, fill: false },
+            { label: 'Memory Usage', data: [], borderColor: '#9333ea', tension: 0.3, fill: false },
+            { label: 'Network Traffic', data: [], borderColor: '#16a34a', tension: 0.3, fill: false },
+            { label: 'Disk I/O', data: [], borderColor: '#dc2626', tension: 0.3, fill: false },
+          ],
+        };
 
-    // Fetch user data from Firestore
-    const fetchUserData = async (userId) => {
-        if (!userId || !db) return null;
-        try {
-            const docRef = doc(db, `/artifacts/${appId}/users/${userId}`, 'profile');
-            const docSnap = await getDoc(docRef);
-            if (docSnap.exists()) {
-                return docSnap.data().username;
-            }
-        } catch (error) {
-            console.error("Error fetching user data:", error);
-        }
-        return null;
+        chartInstanceRef.current = new window.Chart(ctx, {
+          type: 'line',
+          data: initialData,
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              x: {
+                type: 'category',
+                title: { display: true, text: 'Time' },
+                grid: { display: false },
+              },
+              y: {
+                beginAtZero: true,
+                title: { display: true, text: 'Value' },
+                grid: { color: '#e5e7eb' },
+              },
+            },
+          },
+        });
+
+      } catch (error) {
+        console.error("Failed to load Chart.js:", error);
+      }
     };
 
-    const handleLogin = async () => {
-        if (firebaseConfigError || !auth || !db) {
-            showMessage(firebaseConfigError || "Firebase is not initialized.", true);
-            return;
-        }
+    if (typeof window !== 'undefined' && chartRef.current && !chartInstanceRef.current) {
+        loadChartJs();
+    }
 
-        const username = usernameInput.trim();
-        if (username === '') {
-            showMessage('Please enter a username.', true);
-            return;
-        }
+    const interval = setInterval(() => {
+      const newData = generateData();
+      setMetrics(newData);
 
-        try {
-            if (!user) {
-                 await signInAnonymously(auth);
-            }
-            const docRef = doc(db, `/artifacts/${appId}/users/${user?.uid || auth.currentUser.uid}`, 'profile');
-            await setDoc(docRef, { username });
-            showMessage('Username saved successfully!', false);
-        } catch (e) {
-            console.error("Error writing document:", e);
-            showMessage('Error saving username.', true);
-        }
-    };
+      const now = new Date();
+      const timeLabel = now.toLocaleTimeString();
 
-    const handleGuestLogin = async () => {
-        if (firebaseConfigError || !auth) {
-            showMessage(firebaseConfigError || "Firebase is not initialized.", true);
-            return;
-        }
+      dataHistoryRef.current.labels.push(timeLabel);
+      dataHistoryRef.current.cpu.push(newData.cpu);
+      dataHistoryRef.current.memory.push(newData.memory);
+      dataHistoryRef.current.network.push(newData.network);
+      dataHistoryRef.current.disk.push(newData.disk);
 
-        try {
-            if (!user) {
-                await signInAnonymously(auth);
-            }
-            showMessage('Welcome, Guest!', false);
-        } catch (error) {
-            console.error("Error signing in anonymously:", error);
-            showMessage('Error signing in as a guest.', true);
-        }
-    };
+      const maxDataPoints = 15;
+      if (dataHistoryRef.current.labels.length > maxDataPoints) {
+        dataHistoryRef.current.labels.shift();
+        dataHistoryRef.current.cpu.shift();
+        dataHistoryRef.current.memory.shift();
+        dataHistoryRef.current.network.shift();
+        dataHistoryRef.current.disk.shift();
+      }
 
-    const handleLogout = async () => {
-        if (firebaseConfigError || !auth) {
-            showMessage(firebaseConfigError || "Firebase is not initialized.", true);
-            return;
-        }
+      if (chartInstanceRef.current) {
+        chartInstanceRef.current.data.labels = dataHistoryRef.current.labels;
+        chartInstanceRef.current.data.datasets[0].data = dataHistoryRef.current.cpu;
+        chartInstanceRef.current.data.datasets[1].data = dataHistoryRef.current.memory;
+        chartInstanceRef.current.data.datasets[2].data = dataHistoryRef.current.network;
+        chartInstanceRef.current.data.datasets[3].data = dataHistoryRef.current.disk;
+        chartInstanceRef.current.update();
+      }
+    }, 3000);
 
-        try {
-            await signOut(auth);
-            showMessage('You have been logged out.', false);
-        } catch (error) {
-            console.error("Error signing out:", error);
-            showMessage('Error logging out.', true);
-        }
-    };
+    return () => clearInterval(interval);
+  }, []);
 
-    const renderView = () => {
-        if (firebaseConfigError) {
-            return (
-                <div id="error-view" className="text-center space-y-4">
-                    <h1 className="text-3xl font-bold text-red-600">Configuration Error</h1>
-                    <p className="text-lg text-gray-700">The application failed to initialize due to a missing Firebase configuration.</p>
-                    <p className="text-sm text-gray-500">{firebaseConfigError}</p>
-                    <p className="text-sm text-gray-500">Please contact the application provider to resolve this issue.</p>
-                </div>
-            );
-        } else if (loading) {
-            return (
-                <div id="loading-view" className="text-center">
-                    <h1 className="text-4xl font-bold text-gray-800 animate-pulse">Loading...</h1>
-                </div>
-            );
-        } else if (user) {
-            return (
-                <div id="home-view" className="space-y-6 text-center">
-                    <h1 className="text-4xl font-bold text-gray-800">Welcome, <span id="user-name-display">{usernameDisplay}</span>!</h1>
-                    <p className="text-lg text-gray-600">This is your personalized home page.</p>
-                    <div className="p-4 bg-gray-100 rounded-lg">
-                        <p className="text-sm font-semibold text-gray-700">Your User ID:</p>
-                        <p id="user-id-display" className="text-sm text-gray-500 break-all">{user.uid}</p>
-                    </div>
-                    <button
-                        id="logout-btn"
-                        onClick={handleLogout}
-                        className="w-full px-6 py-3 bg-red-600 text-white font-semibold rounded-lg shadow-md hover:bg-red-700 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
-                    >
-                        Logout
-                    </button>
-                </div>
-            );
-        } else {
-            return (
-                <div id="login-view" className="space-y-6">
-                    <h2 className="text-3xl font-bold text-center text-gray-800">Login to your account</h2>
-                    <div className="space-y-4">
-                        <div>
-                            <label htmlFor="username" className="block text-sm font-medium text-gray-700">Username</label>
-                            <input
-                                type="text"
-                                id="username"
-                                placeholder="Enter your username"
-                                value={usernameInput}
-                                onChange={(e) => setUsernameInput(e.target.value)}
-                                className="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200"
-                            />
-                        </div>
-                    </div>
-                    <div className="space-y-3">
-                        <button
-                            id="login-btn"
-                            onClick={handleLogin}
-                            className="w-full px-6 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
-                        >
-                            Login
-                        </button>
-                        <button
-                            id="guest-btn"
-                            onClick={handleGuestLogin}
-                            className="w-full px-6 py-3 bg-gray-200 text-gray-800 font-semibold rounded-lg shadow-md hover:bg-gray-300 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-offset-2"
-                        >
-                            Enter as Guest
-                        </button>
-                    </div>
-                </div>
-            );
-        }
-    };
+  return (
+    <div className="flex items-center justify-center min-h-screen p-4 sm:p-8 font-sans bg-white">
+      <div className="w-full max-w-7xl mx-auto space-y-8">
+        <header className="text-center">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-gray-800 tracking-tight">
+            System Monitoring Dashboard
+          </h1>
+          <p className="mt-2 text-lg text-gray-500">
+            Real-time metrics over time.           </p>
+        </header>
 
-    return (
-        <div className="flex items-center justify-center min-h-screen p-4">
-            <div
-                id="message-box"
-                className={`fixed top-1 left-1/2 -translate-x-1/2 z-50 p-3 rounded-lg text-white font-semibold transition-all duration-300 ${message.show ? 'top-8 opacity-100' : 'opacity-0'}`}
-                style={{ backgroundColor: message.isError ? '#ef4444' : '#22c55e' }}
-            >
-                {message.text}
-            </div>
-            <div className="container">
-                {renderView()}
-            </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="p-6 flex flex-col justify-between">
+            <h3 className="text-lg font-semibold text-gray-700">CPU Usage</h3>
+            <p className="text-4xl font-bold mt-2 text-blue-600">{metrics.cpu}%</p>
+          </div>
+          <div className="p-6 flex flex-col justify-between">
+            <h3 className="text-lg font-semibold text-gray-700">Memory Usage</h3>
+            <p className="text-4xl font-bold mt-2 text-purple-600">{metrics.memory}%</p>
+          </div>
+          <div className="p-6 flex flex-col justify-between">
+            <h3 className="text-lg font-semibold text-gray-700">Network Traffic</h3>
+            <p className="text-4xl font-bold mt-2 text-green-600">{metrics.network} KB/s</p>
+          </div>
+          <div className="p-6 flex flex-col justify-between">
+            <h3 className="text-lg font-semibold text-gray-700">Disk I/O</h3>
+            <p className="text-4xl font-bold mt-2 text-red-600">{metrics.disk} MB/s</p>
+          </div>
         </div>
-    );
+
+        <div className="p-6">
+          <canvas ref={chartRef} className="w-full h-96"></canvas>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 export default App;
